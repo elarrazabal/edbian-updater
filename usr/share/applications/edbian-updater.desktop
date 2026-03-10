@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Edbian Updater
+Comment=Gestor de actualizaciones para APT, Flatpak y Snap
+Exec=edbian-updater
+Icon=system-software-update
+Terminal=false
+Type=Application
+Categories=System;Utility;
