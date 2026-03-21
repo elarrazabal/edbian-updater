@@ -1,0 +1,55 @@
+name: Build DEB package
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-deb:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Extraer versión desde tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          VERSION_CLEAN=${VERSION#v}
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "VERSION_CLEAN=$VERSION_CLEAN" >> $GITHUB_ENV
+
+      - name: Actualizar versión en control
+        run: |
+          sed -i "s/^Version:.*/Version: ${VERSION_CLEAN}/" edbian-updater/DEBIAN/control
+
+      - name: Ajustar permisos (IMPORTANTE)
+        run: |
+          chmod -R 755 edbian-updater
+          chmod 755 edbian-updater/DEBIAN/postinst
+          chmod +x edbian-updater/usr/local/bin/edbian-updater.py
+
+      - name: Construir paquete DEB
+        run: |
+          dpkg-deb --build edbian-updater
+
+      - name: Renombrar paquete con versión
+        run: |
+          mv edbian-updater.deb edbian-updater-${VERSION_CLEAN}.deb
+
+      - name: Subir artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: edbian-updater-deb
+          path: "*.deb"
+
+      - name: Crear release con el DEB
+        uses: softprops/action-gh-release@v2
+        with:
+          files: "*.deb"
+          name: Release ${{ env.VERSION }}
+          tag_name: ${{ env.VERSION }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
