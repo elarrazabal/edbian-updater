@@ -36,7 +36,7 @@ jobs:
     - name: Build .deb
       run: |
         dpkg-deb --build . edbian-updater.deb
-        mv edbian-branding.deb edbian-updater-$VERSION.deb
+        mv edbian-updater.deb edbian-updater-$VERSION.deb
 
     - name: Create Release & Upload Asset
       uses: softprops/action-gh-release@v1
