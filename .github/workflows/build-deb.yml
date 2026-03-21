@@ -1,55 +1,54 @@
-name: Build DEB package
+name: Build & Release Edbian Updater .deb
 
 on:
   push:
     tags:
       - 'v*'
 
+permissions:
+  contents: write   # 🔥 ESTO ES LA CLAVE
+
+
 jobs:
-  build-deb:
+  build-and-release:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout código
-        uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-      - name: Extraer versión desde tag
-        id: version
-        run: |
-          VERSION=${GITHUB_REF#refs/tags/}
-          VERSION_CLEAN=${VERSION#v}
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-          echo "VERSION_CLEAN=$VERSION_CLEAN" >> $GITHUB_ENV
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y dpkg-dev fakeroot curl jq
 
-      - name: Actualizar versión en control
-        run: |
-          sed -i "s/^Version:.*/Version: ${VERSION_CLEAN}/" edbian-updater/DEBIAN/control
+    - name: Determine version
+      run: |
+        VERSION=$(echo ${GITHUB_REF_NAME} | sed 's/^v//')
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "Building version: $VERSION"
 
-      - name: Ajustar permisos (IMPORTANTE)
-        run: |
-          chmod -R 755 edbian-updater
-          chmod 755 edbian-updater/DEBIAN/postinst
-          chmod +x edbian-updater/usr/local/bin/edbian-updater.py
+    - name: Update DEBIAN/control version
+      run: |
+        sed -i "s/^Version:.*/Version: $VERSION/" DEBIAN/control
+        cat DEBIAN/control
 
-      - name: Construir paquete DEB
-        run: |
-          dpkg-deb --build edbian-updater
+    - name: Build .deb
+      run: |
+        dpkg-deb --build . edbian-updater.deb
+        mv edbian-branding.deb edbian-updater-$VERSION.deb
 
-      - name: Renombrar paquete con versión
-        run: |
-          mv edbian-updater.deb edbian-updater-${VERSION_CLEAN}.deb
+    - name: Create Release & Upload Asset
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ env.VERSION }}
+        name: v${{ env.VERSION }}
+        files: edbian-updater-${{ env.VERSION }}.deb
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Subir artefacto
-        uses: actions/upload-artifact@v4
-        with:
-          name: edbian-updater-deb
-          path: "*.deb"
-
-      - name: Crear release con el DEB
-        uses: softprops/action-gh-release@v2
-        with:
-          files: "*.deb"
-          name: Release ${{ env.VERSION }}
-          tag_name: ${{ env.VERSION }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Upload artifact (Actions)
+      uses: actions/upload-artifact@v4
+      with:
+        name: edbian-updater-deb
+        path: edbian-updater-$VERSION.deb
