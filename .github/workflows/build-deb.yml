@@ -35,7 +35,9 @@ jobs:
 
     - name: Build .deb
       run: |
-        dpkg-deb --build . edbian-updater.deb
+        mkdir pkg
+        rsync -a --exclude='.git' --exclude='.github' --exclude='intrucciones' --exclude='LICENSE' --exclude='README*' ./ pkg/
+        dpkg-deb --build pkg edbian-updater.deb
         mv edbian-updater.deb edbian-updater-$VERSION.deb
 
     - name: Create Release & Upload Asset
