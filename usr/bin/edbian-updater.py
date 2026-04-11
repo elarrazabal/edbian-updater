@@ -1,278 +1,219 @@
 #!/usr/bin/env python3
-
-import sys
-import shutil
+import gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk, GLib, Pango, GdkPixbuf
 import subprocess
+import threading
+import shutil
 import os
-from PyQt5.QtWidgets import (
-    QApplication, QWidget, QPushButton, QVBoxLayout, QLabel,
-    QProgressBar, QTableWidget, QTableWidgetItem, QTextEdit,
-    QSystemTrayIcon, QMenu, QAction, QCheckBox, QDialog
-)
-from PyQt5.QtCore import QThread, pyqtSignal, QTimer, Qt
-from PyQt5.QtGui import QIcon, QColor, QFont
 
-# ------------------------
-# ICONO FIJO PARA .deb
-# ------------------------
 ICON_PATH = "/usr/share/edbian-updater/icon_update.jpg"
 
-# ------------------------
-# FUNCIONES AUX
-# ------------------------
 def command_exists(cmd):
     return shutil.which(cmd) is not None
 
-# ------------------------
-# THREAD CHECK UPDATES
-# ------------------------
-class CheckUpdates(QThread):
-    result = pyqtSignal(list)
-    def run(self):
-        updates = []
-        if command_exists("apt-get"):
+
+class Updater(Gtk.Window):
+    def __init__(self):
+        super().__init__(title="Edbian Updater PRO")
+        self.set_default_size(1000, 750)
+
+        # ---------------- ICON ----------------
+        self.set_window_icon()
+
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.add(vbox)
+
+        self.status = Gtk.Label(label="Ready")
+        vbox.pack_start(self.status, False, False, 0)
+
+        btn_box = Gtk.Box(spacing=6)
+        vbox.pack_start(btn_box, False, False, 0)
+
+        self.check_btn = Gtk.Button(label="Check updates")
+        self.check_btn.connect("clicked", self.on_check)
+        btn_box.pack_start(self.check_btn, True, True, 0)
+
+        self.update_all_btn = Gtk.Button(label="Update ALL")
+        self.update_all_btn.set_sensitive(False)
+        self.update_all_btn.connect("clicked", self.on_update_all)
+        btn_box.pack_start(self.update_all_btn, True, True, 0)
+
+        # Progress
+        self.phase_progress = Gtk.ProgressBar()
+        self.package_progress = Gtk.ProgressBar()
+        self.package_label = Gtk.Label(label="")
+        vbox.pack_start(self.phase_progress, False, False, 0)
+        vbox.pack_start(self.package_label, False, False, 0)
+        vbox.pack_start(self.package_progress, False, False, 0)
+
+        # Table
+        self.store = Gtk.ListStore(bool, str, str, str, str, str)
+        tree = Gtk.TreeView(model=self.store)
+
+        toggle = Gtk.CellRendererToggle()
+        toggle.connect("toggled", self.on_toggle_row)
+        tree.append_column(Gtk.TreeViewColumn("✔", toggle, active=0))
+
+        columns = ["Status", "Type", "Package", "Version", "Priority"]
+        for i, col in enumerate(columns):
+            renderer = Gtk.CellRendererText()
+            tree.append_column(Gtk.TreeViewColumn(col, renderer, text=i+1))
+
+        scroll = Gtk.ScrolledWindow()
+        scroll.add(tree)
+        vbox.pack_start(scroll, True, True, 0)
+
+        # Log
+        self.log = Gtk.TextView()
+        self.log.set_editable(False)
+        self.log.modify_font(Pango.FontDescription("monospace 10"))
+        self.buffer = self.log.get_buffer()
+        log_scroll = Gtk.ScrolledWindow()
+        log_scroll.set_size_request(-1, 150)
+        log_scroll.add(self.log)
+        vbox.pack_start(log_scroll, False, False, 0)
+
+        self.updates = []
+
+    # ---------------- ICON ----------------
+    def set_window_icon(self):
+        try:
+            if os.path.exists(ICON_PATH):
+                pixbuf = GdkPixbuf.Pixbuf.new_from_file(ICON_PATH)
+                self.set_icon(pixbuf)
+            else:
+                print(f"[WARN] Icon not found: {ICON_PATH}")
+        except Exception as e:
+            print(f"[ERROR] Loading icon: {e}")
+
+    def log_msg(self, text):
+        end = self.buffer.get_end_iter()
+        self.buffer.insert(end, text + "\n")
+
+    # ---------------- CHECK ----------------
+    def on_check(self, widget):
+        self.store.clear()
+        self.status.set_text("Checking updates...")
+        self.check_btn.set_sensitive(False)
+
+        def worker():
+            updates = []
+
+            subprocess.run(["pkexec", "apt", "update"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            # -------- APT --------
             result = subprocess.run(
-                ["apt-get", "-s", "upgrade"],
+                ["apt", "list", "--upgradable"],
                 capture_output=True,
                 text=True
             )
-            for line in result.stdout.splitlines():
-                if line.startswith("Inst"):
-                    pkg = line.split()[1]
-                    if "security" in line.lower():
-                        updates.append(("APT", pkg, "security"))
-                    else:
-                        updates.append(("APT", pkg, "normal"))
-        if command_exists("flatpak"):
-            result = subprocess.run(
-                ["flatpak", "remote-ls", "--updates"],
-                capture_output=True,
-                text=True
-            )
-            for line in result.stdout.splitlines():
-                if line.strip():
-                    pkg = line.split("\t")[0]
-                    updates.append(("Flatpak", pkg, "normal"))
-        if command_exists("snap"):
-            result = subprocess.run(
-                ["snap", "refresh", "--list"],
-                capture_output=True,
-                text=True
-            )
+
             for line in result.stdout.splitlines()[1:]:
-                if line.strip():
-                    pkg = line.split()[0]
-                    updates.append(("Snap", pkg, "normal"))
-        self.result.emit(updates)
+                if "/" in line:
+                    parts = line.split()
+                    pkg = parts[0].split("/")[0]
+                    new_ver = parts[1]
+                    old_ver = parts[-1].strip("[]")
 
-# ------------------------
-# THREAD UPDATE
-# ------------------------
-class UpdateWorker(QThread):
-    log = pyqtSignal(str)
-    progress = pyqtSignal(int)
-    update_status = pyqtSignal(int)
-    finished = pyqtSignal()
-    def __init__(self, updates):
-        super().__init__()
-        self.updates = updates
-    def run(self):
-        total = len(self.updates)
-        if total == 0:
-            self.finished.emit()
-            return
-        for i, (system, pkg, typ) in enumerate(self.updates):
-            self.log.emit(f"Updating {system}: {pkg}...\n")
-            if system == "APT":
-                subprocess.run(["pkexec", "apt-get", "install", "-y", pkg])
-            elif system == "Flatpak":
-                subprocess.run(["flatpak", "update", "-y", pkg])
-            elif system == "Snap":
-                subprocess.run(["pkexec", "snap", "refresh", pkg])
-            percent = int(((i + 1) / total) * 100)
-            self.progress.emit(percent)
-            self.update_status.emit(i)
-        self.finished.emit()
+                    priority = "normal"
+                    if "security" in line:
+                        priority = "security"
+                    if "linux-image" in pkg or "linux-headers" in pkg:
+                        priority = "kernel"
 
-# ------------------------
-# VENTANA MODAL SISTEMA ACTUALIZADO
-# ------------------------
-class UpToDateDialog(QDialog):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("System status")
-        self.setWindowIcon(QIcon(ICON_PATH))  # Icono modal
-        layout = QVBoxLayout()
-        icon = QLabel("✔")
-        icon.setAlignment(Qt.AlignCenter)
-        icon_font = QFont()
-        icon_font.setPointSize(40)
-        icon.setFont(icon_font)
-        text = QLabel("System is up to date")
-        text.setAlignment(Qt.AlignCenter)
-        text_font = QFont()
-        text_font.setPointSize(16)
-        text.setFont(text_font)
-        layout.addWidget(icon)
-        layout.addWidget(text)
-        self.setLayout(layout)
-        self.resize(300, 150)
+                    updates.append(("APT", pkg, f"{old_ver} → {new_ver}", priority))
 
-# ------------------------
-# VENTANA PRINCIPAL
-# ------------------------
-class Updater(QWidget):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Edbian Updater")
-        self.setWindowIcon(QIcon(ICON_PATH))  # Icono principal
-        self.resize(900, 650)
-        layout = QVBoxLayout()
+            # -------- SNAP --------
+            if command_exists("snap"):
+                result = subprocess.run(
+                    ["snap", "refresh", "--list"],
+                    capture_output=True,
+                    text=True
+                )
 
-        self.status = QLabel("Check updates")
-        self.check_btn = QPushButton("Check updates")
-        self.check_btn.clicked.connect(self.check_updates)
+                for line in result.stdout.splitlines():
+                    if line.strip() and not line.startswith("Name"):
+                        parts = line.split()
+                        pkg = parts[0]
+                        ver = f"{parts[1]} → {parts[2]}"
+                        updates.append(("Snap", pkg, ver, "normal"))
 
-        self.update_btn = QPushButton("Update all")
-        self.update_btn.setEnabled(False)  # deshabilitado por defecto
-        self.update_btn.clicked.connect(self.update_all)
+            # -------- FLATPAK --------
+            if command_exists("flatpak"):
+                result = subprocess.run(
+                    ["flatpak", "remote-ls", "--updates"],
+                    capture_output=True,
+                    text=True
+                )
 
-        self.progress = QProgressBar()
-        self.progress.setVisible(False)
+                for line in result.stdout.splitlines():
+                    if line.strip():
+                        pkg = line.split()[0]
+                        updates.append(("Flatpak", pkg, "-", "normal"))
 
-        self.auto_check = QCheckBox("Automatic check (30 min)")
+            GLib.idle_add(self.show_updates, updates)
 
-        self.table = QTableWidget()
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["Status", "Type", "Package", "Priority"])
-
-        self.log_widget = QTextEdit()
-        self.log_widget.setReadOnly(True)
-
-        legend = QLabel("❌ Pending | ✔ Updated | 🔐 Security | 📦 APT | 🧊 Flatpak | ⚡ Snap")
-
-        layout.addWidget(self.status)
-        layout.addWidget(self.check_btn)
-        layout.addWidget(self.update_btn)
-        layout.addWidget(self.auto_check)
-        layout.addWidget(self.progress)
-        layout.addWidget(self.table)
-        layout.addWidget(QLabel("Log"))
-        layout.addWidget(self.log_widget)
-        layout.addWidget(legend)
-        self.setLayout(layout)
-
-        self.init_tray()
-
-        self.timer = QTimer()
-        self.timer.timeout.connect(self.check_updates)
-        self.auto_check.stateChanged.connect(self.toggle_auto)
-
-    def init_tray(self):
-        self.tray_ok = QIcon(ICON_PATH)
-        self.tray_updates = QIcon(ICON_PATH)
-        self.tray_security = QIcon(ICON_PATH)
-        self.tray = QSystemTrayIcon(self.tray_ok)
-        menu = QMenu()
-        open_action = QAction("Open")
-        quit_action = QAction("Quit")
-        open_action.triggered.connect(self.show)
-        quit_action.triggered.connect(QApplication.quit)
-        menu.addAction(open_action)
-        menu.addAction(quit_action)
-        self.tray.setContextMenu(menu)
-        self.tray.show()
-
-    # -------------------------
-    # CHECK UPDATES
-    # -------------------------
-    def check_updates(self):
-        self.table.setRowCount(0)
-        self.status.setText("Scanning updates...")
-        self.update_btn.setEnabled(False)
-        self.progress.setVisible(True)
-        self.progress.setRange(0,0)  # spinner indeterminado
-
-        self.log_widget.clear()
-        self.checker = CheckUpdates()
-        self.checker.result.connect(self.show_updates)
-        self.checker.start()
+        threading.Thread(target=worker).start()
 
     def show_updates(self, updates):
-        self.progress.setVisible(False)
         self.updates = updates
-        self.table.setRowCount(len(updates))
-        security_found = False
 
-        for row, (system, pkg, typ) in enumerate(updates):
-            status = QTableWidgetItem("❌")
-            status.setBackground(QColor(255,200,200))
-            icon = "📦" if system=="APT" else "🧊" if system=="Flatpak" else "⚡"
-            self.table.setItem(row,0,status)
-            self.table.setItem(row,1,QTableWidgetItem(f"{icon} {system}"))
-            self.table.setItem(row,2,QTableWidgetItem(pkg))
-            if typ=="security":
-                item = QTableWidgetItem("🔐 security")
-                item.setBackground(QColor(255,180,180))
-                security_found = True
-            else:
-                item = QTableWidgetItem("normal")
-            self.table.setItem(row,3,item)
+        for system, pkg, version, priority in updates:
+            self.store.append([False, "❌", system, pkg, version, priority])
 
-        # Activar botón solo si hay actualizaciones
-        self.update_btn.setEnabled(len(updates) > 0)
+        self.status.set_text(f"{len(updates)} updates available")
+        self.check_btn.set_sensitive(True)
+        self.update_all_btn.set_sensitive(True)
 
-        count = len(updates)
-        if count==0:
-            dialog = UpToDateDialog()
-            dialog.exec_()
-            self.status.setText("System up to date")
-            self.tray.setIcon(self.tray_ok)
-        else:
-            self.status.setText(f"{count} updates available")
-            self.tray.setIcon(self.tray_security if security_found else self.tray_updates)
+    # ---------------- UPDATE ----------------
+    def on_update_all(self, widget):
+        self.run_updates(self.updates)
 
-    # -------------------------
-    # UPDATE ALL
-    # -------------------------
-    def update_all(self):
-        if not self.updates or len(self.updates)==0:
-            return
+    def run_updates(self, updates):
+        def worker():
+            total = len(updates)
+            done = 0
 
-        self.progress.setVisible(True)
-        self.progress.setRange(0,100)
-        self.progress.setValue(0)
-        self.log_widget.clear()
+            apt_pkgs = [p[1] for p in updates if p[0] == "APT"]
+            snap_pkgs = [p[1] for p in updates if p[0] == "Snap"]
+            flat_pkgs = [p[1] for p in updates if p[0] == "Flatpak"]
 
-        self.worker = UpdateWorker(self.updates)
-        self.worker.progress.connect(self.progress.setValue)
-        self.worker.update_status.connect(self.mark_updated)
-        self.worker.log.connect(self.append_log)
-        self.worker.finished.connect(self.finish_update)
-        self.worker.start()
+            if apt_pkgs:
+                subprocess.run(["pkexec", "apt", "upgrade", "-y"])
+                if any("linux" in p for p in apt_pkgs):
+                    subprocess.run(["pkexec", "apt", "full-upgrade", "-y"])
+                done += len(apt_pkgs)
+                GLib.idle_add(self.package_progress.set_fraction, done / total)
 
-    def mark_updated(self,row):
-        item = QTableWidgetItem("✔")
-        item.setBackground(QColor(200,255,200))
-        self.table.setItem(row,0,item)
+            if snap_pkgs:
+                subprocess.run(["pkexec", "snap", "refresh"] + snap_pkgs)
+                done += len(snap_pkgs)
+                GLib.idle_add(self.package_progress.set_fraction, done / total)
 
-    def append_log(self,text):
-        self.log_widget.append(text)
+            for pkg in flat_pkgs:
+                subprocess.run(["flatpak", "update", "-y", pkg])
+                done += 1
+                GLib.idle_add(self.package_progress.set_fraction, done / total)
 
-    def finish_update(self):
-        self.status.setText("Update finished")
-        self.tray.setIcon(self.tray_ok)
-        self.progress.setVisible(False)
-        self.update_btn.setEnabled(False)
+            if os.path.exists("/var/run/reboot-required"):
+                GLib.idle_add(self.log_msg, "⚠ Reboot required!")
 
-    def toggle_auto(self):
-        if self.auto_check.isChecked(): self.timer.start(1800000)
-        else: self.timer.stop()
+            GLib.idle_add(self.finish)
 
-# ------------------------
+        threading.Thread(target=worker).start()
+
+    def finish(self):
+        self.status.set_text("Finished")
+        self.package_label.set_text("Done")
+
+    def on_toggle_row(self, widget, path):
+        self.store[path][0] = not self.store[path][0]
+
+
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    app.setStyle("Fusion")
-    window = Updater()
-    window.show()
-    sys.exit(app.exec_())
+    win = Updater()
+    win.connect("destroy", Gtk.main_quit)
+    win.show_all()
+    Gtk.main()
