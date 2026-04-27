@@ -181,14 +181,31 @@ class Updater(Gtk.Window):
                     ver = l.split()[1]
                     updates.append(("deb", pkg, ver, "APT"))
 
-            fp = subprocess.run(["flatpak", "remote-ls", "--updates"],
-                                capture_output=True, text=True)
+            fp = subprocess.run(
+                [
+                    "flatpak", "remote-ls", "--updates",
+                    "--columns=application,name,ref"
+                ],
+                capture_output=True,
+                text=True
+            )
 
             for l in fp.stdout.splitlines():
-                parts = l.split()
-                if parts:
-                    updates.append(("app", parts[0], "-", "Flatpak"))
+                parts = l.split("\t")  # separación por TAB
 
+                if len(parts) >= 3:
+                    app_id = parts[0]     # org.mozilla.firefox
+                    name = parts[1]       # Firefox (nombre amigable)
+                    ref = parts[2]        # org.mozilla.firefox/x86_64/stable
+
+                    # Si por lo que sea no hay nombre, fallback al ID
+                    display_name = name if name else app_id
+
+                    updates.append(("app", display_name, ref, "Flatpak"))
+        
+        
+        
+        
             snap = subprocess.run(["snap", "refresh", "--list"],
                                   capture_output=True, text=True)
 
@@ -217,11 +234,29 @@ class Updater(Gtk.Window):
     # ================= INSTALL =================
     def on_install_selected(self, widget):
         rows = [r[:] for r in self.store if r[0]]
-        self.install(rows)
+
+        if not rows:
+            return
+
+        preview = self.preview_changes(rows)
+
+        if self.show_preview_dialog(preview):
+            self.install(rows)
 
     def on_install_all(self, widget):
         rows = [r[:] for r in self.store]
-        self.install(rows)
+
+        if not rows:
+            return
+
+        preview = self.preview_changes(rows)
+
+        if self.show_preview_dialog(preview):
+            self.install(rows)
+        
+        
+        
+        
 
     def install(self, rows):
         self.set_busy(True)
@@ -230,14 +265,21 @@ class Updater(Gtk.Window):
 
         def worker():
             apt = [r[2] for r in rows if r[4] == "APT"]
-            flatpak = [r[2] for r in rows if r[4] == "Flatpak"]
+            flatpak_refs = [r[3] for r in rows if r[4] == "Flatpak"]
             snap = [r[2] for r in rows if r[4] == "Snap"]
 
             if apt:
                 subprocess.run(["pkexec", "apt-get", "-y", "install"] + apt)
 
-            if flatpak:
-                subprocess.run(["flatpak", "update", "-y"] + flatpak)
+            if flatpak_refs:
+                for ref in flatpak_refs:
+                    subprocess.run([
+                        "flatpak",
+                        "install",
+                        "-y",
+                        "--noninteractive",
+                        ref
+                    ])
 
             if snap:
                 subprocess.run(["pkexec", "snap", "refresh"] + snap)
@@ -245,6 +287,86 @@ class Updater(Gtk.Window):
             GLib.idle_add(self.finish_install, rows)
 
         threading.Thread(target=worker).start()
+        
+        
+    def preview_changes(self, rows):
+        preview_text = ""
+
+        # ===== APT =====
+        apt = [r[2] for r in rows if r[4] == "APT"]
+        if apt:
+            result = subprocess.run(
+                ["apt-get", "-s", "install"] + apt,
+                capture_output=True,
+                text=True
+            )
+            preview_text += "=== APT ===\n"
+            preview_text += result.stdout + "\n"
+
+        # ===== FLATPAK =====
+        flatpak = [r[3] for r in rows if r[4] == "Flatpak"]
+        if flatpak:
+            preview_text += "=== FLATPAK ===\n"
+            for ref in flatpak:
+                result = subprocess.run(
+                    ["flatpak", "install", "--assumeno", ref],
+                    capture_output=True,
+                    text=True
+                )
+                preview_text += f"\n--- {ref} ---\n"
+                preview_text += result.stdout + "\n"
+
+        # ===== SNAP =====
+        snap = [r[2] for r in rows if r[4] == "Snap"]
+        if snap:
+            preview_text += "=== SNAP ===\n"
+            for s in snap:
+                preview_text += f"{s} será actualizado\n"
+
+        return preview_text
+        
+        
+        
+    def show_preview_dialog(self, text):
+        dialog = Gtk.Dialog(
+            title="Resumen de cambios",
+            transient_for=self,
+            flags=0
+        )
+        dialog.set_default_size(700, 500)
+
+        box = dialog.get_content_area()
+        box.set_vexpand(True)
+        box.set_hexpand(True)
+        box.set_border_width(10)
+
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_vexpand(True)
+        scroll.set_hexpand(True)
+        box.add(scroll)
+
+        textview = Gtk.TextView()
+        textview.set_editable(False)
+        textview.set_monospace(True)
+        textview.set_vexpand(True)
+        textview.set_hexpand(True)
+
+        buffer = textview.get_buffer()
+        buffer.set_text(text)
+
+        scroll.add(textview)
+
+        dialog.add_button("Cancelar", Gtk.ResponseType.CANCEL)
+        dialog.add_button("Instalar", Gtk.ResponseType.OK)
+
+        dialog.show_all()
+        response = dialog.run()
+        dialog.destroy()
+
+        return response == Gtk.ResponseType.OK        
+        
+        
+        
 
     def finish_install(self, rows):
         to_remove = set((r[2], r[4]) for r in rows)
