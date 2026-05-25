@@ -1,9 +1,9 @@
 Package: edbian-updater
-Version: 2.0.0
+Version: 2.0.2
 Section: utils
 Priority: optional
 Architecture: all
 Depends: python3, python3-pyqt5, pkexec, polkitd
-Maintainer: Tu Nombre <tu@email.com>
+Maintainer: Eduardo de Larrazabal <elarrazabal@gmail.com>
 Description: Gestor de actualizaciones para APT, Flatpak y Snap
  Permite ver actualizaciones, actualizarlas y recibir notificaciones.
