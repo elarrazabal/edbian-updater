@@ -83,6 +83,27 @@ class Updater(Gtk.Window):
         scroll = Gtk.ScrolledWindow()
         scroll.add(tree)
         vbox.pack_start(scroll, True, True, 0)
+        
+        
+        # ================= LOG EN TIEMPO REAL =================
+
+        log_frame = Gtk.Frame(label="Log de instalación")
+
+        log_scroll = Gtk.ScrolledWindow()
+        log_scroll.set_size_request(-1, 220)
+
+        self.log_view = Gtk.TextView()
+        self.log_view.set_editable(False)
+        self.log_view.set_monospace(True)
+
+        self.log_buffer = self.log_view.get_buffer()
+
+        log_scroll.add(self.log_view)
+        log_frame.add(log_scroll)
+
+        vbox.pack_start(log_frame, False, True, 0)
+        
+        
 
         # ================= BOTONES INFERIORES RESTAURADOS =================
         bottom = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -100,15 +121,15 @@ class Updater(Gtk.Window):
         self.cancel_btn.set_sensitive(False)
         self.cancel_btn.connect("clicked", self.on_cancel)
 
-        self.open_log_btn = Gtk.Button(label="Ver log")
-        self.open_log_btn.set_sensitive(False)
-        self.open_log_btn.connect("clicked", self.on_open_log)
+        #self.open_log_btn = Gtk.Button(label="Ver log")
+        #self.open_log_btn.set_sensitive(False)
+        #self.open_log_btn.connect("clicked", self.on_open_log)
 
         self.close_btn = Gtk.Button(label="Cerrar")
         self.close_btn.connect("clicked", self.on_close)
 
         left_box.pack_start(self.cancel_btn, False, False, 0)
-        center_box.pack_start(self.open_log_btn, False, False, 0)
+        #center_box.pack_start(self.open_log_btn, False, False, 0)
         right_box.pack_end(self.close_btn, False, False, 0)
         
         #========= Icono de la ventana
@@ -183,8 +204,10 @@ class Updater(Gtk.Window):
 
             fp = subprocess.run(
                 [
-                    "flatpak", "remote-ls", "--updates",
-                    "--columns=application,name,ref"
+                    "flatpak",
+                    "update",
+                    "--appstream",
+                    "--assumeno"
                 ],
                 capture_output=True,
                 text=True
@@ -207,7 +230,7 @@ class Updater(Gtk.Window):
         
         
             snap = subprocess.run(["snap", "refresh", "--list"],
-                                  capture_output=True, text=True)
+                                   capture_output=True, text=True)
 
             for l in snap.stdout.splitlines()[1:]:
                 parts = l.split()
@@ -230,6 +253,65 @@ class Updater(Gtk.Window):
         self.install_all_btn.set_sensitive(True)
 
         self.set_status(f"{len(updates)} actualizaciones disponibles")
+        
+        
+        
+        
+    # ================= LOG =================
+
+    def append_log(self, text):
+
+        def update():
+
+            end_iter = self.log_buffer.get_end_iter()
+
+            self.log_buffer.insert(end_iter, text)
+
+            mark = self.log_buffer.create_mark(
+                None,
+                self.log_buffer.get_end_iter(),
+                False
+            )
+
+            self.log_view.scroll_mark_onscreen(mark)
+
+            return False
+
+        GLib.idle_add(update)
+
+
+        def run_command_live(self, cmd):
+
+            self.current_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                universal_newlines=True,
+                bufsize=1
+            )
+
+        with open(self.log_file, "a") as logfile:
+
+            while True:
+
+                line = self.current_process.stdout.readline()
+
+                if not line and self.current_process.poll() is not None:
+                    break
+
+                if line:
+
+                    logfile.write(line)
+                    logfile.flush()
+
+                    self.append_log(line)
+
+        return self.current_process.wait()    
+        
+        
+        
+        
 
     # ================= INSTALL =================
     def on_install_selected(self, widget):
@@ -259,34 +341,86 @@ class Updater(Gtk.Window):
         
 
     def install(self, rows):
+
         self.set_busy(True)
         self.cancel_btn.set_sensitive(True)
+        self.open_log_btn.set_sensitive(True)
+
         self.set_status("Instalando...")
 
+        self.log_buffer.set_text("")
+
+        open(self.log_file, "w").close()
+
         def worker():
+
             apt = [r[2] for r in rows if r[4] == "APT"]
+
             flatpak_refs = [r[3] for r in rows if r[4] == "Flatpak"]
+
             snap = [r[2] for r in rows if r[4] == "Snap"]
 
+            # ---------------- APT ----------------
+
             if apt:
-                subprocess.run(["pkexec", "apt-get", "-y", "install"] + apt)
+
+                self.append_log(
+                    "\n================ APT ================\n"
+                )
+
+                self.run_command_live(
+                    [
+                        "pkexec",
+                        "apt-get",
+                        "-y",
+                        "install"
+                    ] + apt
+                )
+
+            # ---------------- FLATPAK ----------------
 
             if flatpak_refs:
-                for ref in flatpak_refs:
-                    subprocess.run([
+
+                self.append_log(
+                    "\n============== FLATPAK ==============\n"
+                )
+
+                #
+                # CORRECCIÓN:
+                # Para actualizar aplicaciones Flatpak
+                # NO se usa install.
+                #
+
+                self.run_command_live(
+                    [
                         "flatpak",
-                        "install",
-                        "-y",
-                        "--noninteractive",
-                        ref
-                    ])
+                        "update",
+                        "-y"
+                    ]
+                )
+
+            # ---------------- SNAP ----------------
 
             if snap:
-                subprocess.run(["pkexec", "snap", "refresh"] + snap)
+
+                self.append_log(
+                    "\n=============== SNAP ================\n"
+                )
+
+                self.run_command_live(
+                    [
+                        "pkexec",
+                        "snap",
+                        "refresh"
+                    ] + snap
+                )
 
             GLib.idle_add(self.finish_install, rows)
 
-        threading.Thread(target=worker).start()
+        threading.Thread(
+            target=worker,
+            daemon=True
+        ).start()
         
         
     def preview_changes(self, rows):
