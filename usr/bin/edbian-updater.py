@@ -6,6 +6,7 @@ from gi.repository import Gtk, GLib, GdkPixbuf
 import subprocess
 import threading
 import os
+import shutil
 
 
 ICON_PATH = "/usr/share/edbian-updater/icon_update.jpg"
@@ -191,6 +192,9 @@ class Updater(Gtk.Window):
         def worker():
             updates = []
 
+            has_flatpak = shutil.which("flatpak") is not None
+            has_snap = shutil.which("snap") is not None
+		
             subprocess.run(["pkexec", "apt", "update"])
 
             apt = subprocess.run(["apt", "list", "--upgradable"],
@@ -202,40 +206,52 @@ class Updater(Gtk.Window):
                     ver = l.split()[1]
                     updates.append(("deb", pkg, ver, "APT"))
 
-            fp = subprocess.run(
-                [
-                    "flatpak",
-                    "update",
-                    "--appstream",
-                    "--assumeno"
-                ],
-                capture_output=True,
-                text=True
+            # ===== FLATPAK =====
+            if has_flatpak:
+
+                fp = subprocess.run(
+                    [
+                        "flatpak",
+                        "update",
+                        "--appstream",
+                        "--assumeno"
+                    ],
+                    capture_output=True,
+                    text=True
+                )
+
+                for l in fp.stdout.splitlines():
+                    parts = l.split("\t")
+
+                    if len(parts) >= 3:
+                        app_id = parts[0]
+                        name = parts[1]
+                        ref = parts[2]
+
+                        display_name = name if name else app_id
+
+                        updates.append(
+                            ("app", display_name, ref, "Flatpak")
+                        )
+                    
+                    
+        
+            # ===== SNAP =====
+            if has_snap:
+
+                snap = subprocess.run(
+                    ["snap", "refresh", "--list"],
+                    capture_output=True,
+                    text=True
             )
-
-            for l in fp.stdout.splitlines():
-                parts = l.split("\t")  # separación por TAB
-
-                if len(parts) >= 3:
-                    app_id = parts[0]     # org.mozilla.firefox
-                    name = parts[1]       # Firefox (nombre amigable)
-                    ref = parts[2]        # org.mozilla.firefox/x86_64/stable
-
-                    # Si por lo que sea no hay nombre, fallback al ID
-                    display_name = name if name else app_id
-
-                    updates.append(("app", display_name, ref, "Flatpak"))
-        
-        
-        
-        
-            snap = subprocess.run(["snap", "refresh", "--list"],
-                                   capture_output=True, text=True)
 
             for l in snap.stdout.splitlines()[1:]:
                 parts = l.split()
+
                 if parts:
-                    updates.append(("snap", parts[0], parts[1], "Snap"))
+                    updates.append(
+                        ("snap", parts[0], parts[1], "Snap")
+                    )
 
             GLib.idle_add(self.fill, updates)
 
@@ -247,8 +263,16 @@ class Updater(Gtk.Window):
         for u in updates:
             self.store.append([False, *u])
 
-        for t in [self.t_all, self.t_apt, self.t_flatpak, self.t_snap]:
-            t.set_sensitive(True)
+        self.t_all.set_sensitive(True)
+        self.t_apt.set_sensitive(True)
+
+        self.t_flatpak.set_sensitive(
+            shutil.which("flatpak") is not None
+        )
+
+        self.t_snap.set_sensitive(
+            shutil.which("snap") is not None
+        )
 
         self.install_all_btn.set_sensitive(True)
 
@@ -378,8 +402,8 @@ class Updater(Gtk.Window):
                 )
 
             # ---------------- FLATPAK ----------------
-
-            if flatpak_refs:
+            has_flatpak = shutil.which("flatpak") is not None
+            if flatpak_refs and has_flatpak:
 
                 self.append_log(
                     "\n============== FLATPAK ==============\n"
@@ -400,8 +424,8 @@ class Updater(Gtk.Window):
                 )
 
             # ---------------- SNAP ----------------
-
-            if snap:
+            has_snap = shutil.which("snap") is not None
+            if snap and has_snap:
 
                 self.append_log(
                     "\n=============== SNAP ================\n"
@@ -425,6 +449,8 @@ class Updater(Gtk.Window):
         
     def preview_changes(self, rows):
         preview_text = ""
+        has_flatpak = shutil.which("flatpak") is not None
+        has_snap = shutil.which("snap") is not None
 
         # ===== APT =====
         apt = [r[2] for r in rows if r[4] == "APT"]
@@ -439,7 +465,7 @@ class Updater(Gtk.Window):
 
         # ===== FLATPAK =====
         flatpak = [r[3] for r in rows if r[4] == "Flatpak"]
-        if flatpak:
+        if flatpak and has_flatpak:
             preview_text += "=== FLATPAK ===\n"
             for ref in flatpak:
                 result = subprocess.run(
@@ -452,7 +478,7 @@ class Updater(Gtk.Window):
 
         # ===== SNAP =====
         snap = [r[2] for r in rows if r[4] == "Snap"]
-        if snap:
+        if snap and has_snap:
             preview_text += "=== SNAP ===\n"
             for s in snap:
                 preview_text += f"{s} será actualizado\n"
