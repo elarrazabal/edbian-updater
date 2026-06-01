@@ -122,15 +122,15 @@ class Updater(Gtk.Window):
         self.cancel_btn.set_sensitive(False)
         self.cancel_btn.connect("clicked", self.on_cancel)
 
-        #self.open_log_btn = Gtk.Button(label="Ver log")
-        #self.open_log_btn.set_sensitive(False)
-        #self.open_log_btn.connect("clicked", self.on_open_log)
-
+        self.open_log_btn = Gtk.Button(label="Ver log")
+        self.open_log_btn.set_sensitive(False)
+        self.open_log_btn.connect("clicked", self.on_open_log)
+        
         self.close_btn = Gtk.Button(label="Cerrar")
         self.close_btn.connect("clicked", self.on_close)
 
         left_box.pack_start(self.cancel_btn, False, False, 0)
-        #center_box.pack_start(self.open_log_btn, False, False, 0)
+        center_box.pack_start(self.open_log_btn, False, False, 0)
         right_box.pack_end(self.close_btn, False, False, 0)
         
         #========= Icono de la ventana
@@ -243,10 +243,10 @@ class Updater(Gtk.Window):
                     ["snap", "refresh", "--list"],
                     capture_output=True,
                     text=True
-            )
+                )
 
-            for l in snap.stdout.splitlines()[1:]:
-                parts = l.split()
+                for l in snap.stdout.splitlines()[1:]:
+                    parts = l.split()
 
                 if parts:
                     updates.append(
@@ -304,16 +304,16 @@ class Updater(Gtk.Window):
         GLib.idle_add(update)
 
 
-        def run_command_live(self, cmd):
+    def run_command_live(self, cmd):
 
-            self.current_process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                universal_newlines=True,
-                bufsize=1
-            )
+        self.current_process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            universal_newlines=True,
+            bufsize=1
+        )
 
         with open(self.log_file, "a") as logfile:
 
