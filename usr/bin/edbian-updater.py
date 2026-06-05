@@ -190,72 +190,103 @@ class Updater(Gtk.Window):
         self.set_status("Buscando actualizaciones...")
 
         def worker():
-            updates = []
-
-            has_flatpak = shutil.which("flatpak") is not None
-            has_snap = shutil.which("snap") is not None
+            self.append_log("Lanzando worker....\n")
+            try:
+                updates = []
+			
+                has_flatpak = shutil.which("flatpak") is not None
+                has_snap = shutil.which("snap") is not None
 		
-            subprocess.run(["pkexec", "apt", "update"])
+                self.append_log("Ejecutando apt update...\n")
+                subprocess.run(["pkexec", "apt", "update"])
 
-            apt = subprocess.run(["apt", "list", "--upgradable"],
+                apt = subprocess.run(["apt", "list", "--upgradable"],
                                  capture_output=True, text=True)
 
-            for l in apt.stdout.splitlines()[1:]:
-                if "/" in l:
-                    pkg = l.split("/")[0]
-                    ver = l.split()[1]
-                    updates.append(("deb", pkg, ver, "APT"))
+                for l in apt.stdout.splitlines()[1:]:
+                    if "/" in l:
+                        pkg = l.split("/")[0]
+                        ver = l.split()[1]
+                        updates.append(("deb", pkg, ver, "APT"))
+                
+                self.append_log("APT Update finalizado...\n")
 
-            # ===== FLATPAK =====
-            if has_flatpak:
-
-                fp = subprocess.run(
-                    [
-                        "flatpak",
-                        "update",
-                        "--appstream",
-                        "--assumeno"
-                    ],
-                    capture_output=True,
-                    text=True
-                )
-
-                for l in fp.stdout.splitlines():
-                    parts = l.split("\t")
-
-                    if len(parts) >= 3:
-                        app_id = parts[0]
-                        name = parts[1]
-                        ref = parts[2]
-
-                        display_name = name if name else app_id
-
-                        updates.append(
-                            ("app", display_name, ref, "Flatpak")
-                        )
-                    
-                    
-        
-            # ===== SNAP =====
-            if has_snap:
-
-                snap = subprocess.run(
-                    ["snap", "refresh", "--list"],
-                    capture_output=True,
-                    text=True
-                )
-
-                for l in snap.stdout.splitlines()[1:]:
-                    parts = l.split()
-
-                if parts:
-                    updates.append(
-                        ("snap", parts[0], parts[1], "Snap")
+                # ===== FLATPAK =====
+                if has_flatpak:
+                
+                    self.append_log("Ejecutando flatpak...\n")
+                    fp = subprocess.run(
+                        [
+                            "flatpak",
+                            "update",
+                            "--appstream",
+                            "--assumeno"
+                        ],
+                        capture_output=True,
+                        text=True
                     )
 
-            GLib.idle_add(self.fill, updates)
+                    for l in fp.stdout.splitlines():
+                        parts = l.split("\t")
 
+                        if len(parts) >= 3:
+                            app_id = parts[0]
+                            name = parts[1]
+                            ref = parts[2]
+
+                            display_name = name if name else app_id
+
+                            updates.append(
+                                ("app", display_name, ref, "Flatpak")
+                            )
+                    self.append_log("Flatpak finalizado...\n")
+                    
+        
+                # ===== SNAP =====
+                if has_snap:
+                    
+                    self.append_log("Ejecutando SNAP...\n")
+
+                    snap = subprocess.run(
+                        ["snap", "refresh", "--list"],
+                        capture_output=True,
+                        text=True
+                    )
+
+                    for l in snap.stdout.splitlines()[1:]:
+                        parts = l.split()
+
+                        if parts:
+                            updates.append(
+                                ("snap", parts[0], parts[1], "Snap")
+                            )
+
+                GLib.idle_add(self.fill, updates)
+
+            
+                
+                self.append_log("Finalizado SNAP...\n")
+                
+            except Exception as e:
+                import traceback
+
+                traceback.print_exc()
+                error = traceback.format_exc()
+                
+                self.append_log(error)
+
+                GLib.idle_add(
+                    self.set_status,
+                    f"Error: {e}"
+                )
+                
+                GLib.idle_add(
+                    self.set_status,
+                    "Error durante la búsqueda"
+                )
+        
         threading.Thread(target=worker).start()
+                
 
     def fill(self, updates):
         self.set_busy(False)
