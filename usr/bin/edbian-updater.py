@@ -213,33 +213,50 @@ class Updater(Gtk.Window):
 
                 # ===== FLATPAK =====
                 if has_flatpak:
-                
-                    self.append_log("Ejecutando flatpak...\n")
+
+                    self.append_log("Buscando actualizaciones Flatpak...\n")
+
                     fp = subprocess.run(
-                        [
-                            "flatpak",
-                            "update",
-                            "--appstream",
-                            "--assumeno"
-                        ],
+                        ["flatpak", "remote-ls", "--updates"],
                         capture_output=True,
                         text=True
                     )
 
-                    for l in fp.stdout.splitlines():
-                        parts = l.split("\t")
+                    self.append_log(fp.stdout + "\n")
+
+                    lines = fp.stdout.splitlines()
+
+                    # Saltar cabecera
+                    for line in lines[1:]:
+
+                        line = line.strip()
+
+                        if not line:
+                            continue
+
+                        parts = line.split()
+
+                        if len(parts) < 2:
+                            continue
+
+                        nombre = parts[0]
+                        appid = parts[1]
+
+                        version = "-"
 
                         if len(parts) >= 3:
-                            app_id = parts[0]
-                            name = parts[1]
-                            ref = parts[2]
+                            version = parts[2]
 
-                            display_name = name if name else app_id
-
-                            updates.append(
-                                ("app", display_name, ref, "Flatpak")
+                        updates.append(
+                            (
+                                "app",
+                                nombre,
+                                version,
+                                "Flatpak"
                             )
-                    self.append_log("Flatpak finalizado...\n")
+                        )
+
+                self.append_log("Flatpak finalizado\n")
                     
         
                 # ===== SNAP =====
@@ -411,7 +428,10 @@ class Updater(Gtk.Window):
 
             apt = [r[2] for r in rows if r[4] == "APT"]
 
-            flatpak_refs = [r[3] for r in rows if r[4] == "Flatpak"]
+            flatpak_updates = any(
+                r[4] == "Flatpak"
+                for r in rows
+            )
 
             snap = [r[2] for r in rows if r[4] == "Snap"]
 
@@ -434,7 +454,7 @@ class Updater(Gtk.Window):
 
             # ---------------- FLATPAK ----------------
             has_flatpak = shutil.which("flatpak") is not None
-            if flatpak_refs and has_flatpak:
+            if flatpak_updates and has_flatpak:
 
                 self.append_log(
                     "\n============== FLATPAK ==============\n"
@@ -495,17 +515,16 @@ class Updater(Gtk.Window):
             preview_text += result.stdout + "\n"
 
         # ===== FLATPAK =====
-        flatpak = [r[3] for r in rows if r[4] == "Flatpak"]
+        flatpak = [r for r in rows if r[4] == "Flatpak"]
+
         if flatpak and has_flatpak:
-            preview_text += "=== FLATPAK ===\n"
-            for ref in flatpak:
-                result = subprocess.run(
-                    ["flatpak", "install", "--assumeno", ref],
-                    capture_output=True,
-                    text=True
-                )
-                preview_text += f"\n--- {ref} ---\n"
-                preview_text += result.stdout + "\n"
+
+            preview_text += (
+                "=== FLATPAK ===\n"
+                f"{len(flatpak)} aplicaciones Flatpak serán actualizadas\n\n"
+            )
+        preview_text += f"\n--- {ref} ---\n"
+        preview_text += result.stdout + "\n"
 
         # ===== SNAP =====
         snap = [r[2] for r in rows if r[4] == "Snap"]
