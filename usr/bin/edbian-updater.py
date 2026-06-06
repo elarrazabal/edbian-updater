@@ -500,38 +500,59 @@ class Updater(Gtk.Window):
         
     def preview_changes(self, rows):
         preview_text = ""
+
         has_flatpak = shutil.which("flatpak") is not None
         has_snap = shutil.which("snap") is not None
 
-        # ===== APT =====
+        apt_preview = ""
+        flatpak_preview = ""
+        snap_preview = ""
+
+        # ================= APT =================
         apt = [r[2] for r in rows if r[4] == "APT"]
+
         if apt:
             result = subprocess.run(
                 ["apt-get", "-s", "install"] + apt,
                 capture_output=True,
                 text=True
             )
-            preview_text += "=== APT ===\n"
-            preview_text += result.stdout + "\n"
 
-        # ===== FLATPAK =====
+            apt_preview += "=== APT ===\n"
+            apt_preview += result.stdout + "\n"
+
+        # ================= FLATPAK =================
         flatpak = [r for r in rows if r[4] == "Flatpak"]
 
         if flatpak and has_flatpak:
-
-            preview_text += (
-                "=== FLATPAK ===\n"
+            flatpak_preview += "=== FLATPAK ===\n"
+            flatpak_preview += (
                 f"{len(flatpak)} aplicaciones Flatpak serán actualizadas\n\n"
             )
-        preview_text += f"\n--- {ref} ---\n"
-        preview_text += result.stdout + "\n"
 
-        # ===== SNAP =====
+            # opcional: listado real de updates
+            result = subprocess.run(
+                ["flatpak", "remote-ls", "--updates"],
+                capture_output=True,
+                text=True
+            )
+
+            if result.stdout.strip():
+                flatpak_preview += result.stdout + "\n"
+
+        # ================= SNAP =================
         snap = [r[2] for r in rows if r[4] == "Snap"]
+
         if snap and has_snap:
-            preview_text += "=== SNAP ===\n"
+            snap_preview += "=== SNAP ===\n"
+
             for s in snap:
-                preview_text += f"{s} será actualizado\n"
+                snap_preview += f"{s} será actualizado\n"
+
+        # ================= OUTPUT FINAL =================
+        preview_text += apt_preview
+        preview_text += flatpak_preview
+        preview_text += snap_preview
 
         return preview_text
         
