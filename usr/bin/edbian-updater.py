@@ -225,28 +225,69 @@ class Updater(Gtk.Window):
                     self.append_log(fp.stdout + "\n")
 
                     lines = fp.stdout.splitlines()
+                    
+                    ####### Eliminar
+                    
+                    #self.append_log(f"LINES={repr(lines)}\n")
+                    #####
 
                     # Saltar cabecera
-                    for line in lines[1:]:
+                    ##### Descomentar
+                    #for line in lines[1:]:
+                    
+                    ###### Eliminar
+                    for line in lines:
+                    #    if "ID de aplicación" in line:
+                    #        continue
+
+                    #   if "Application ID" in line:
+                    #        continue
+                    #####
+                    
+                        ##### Eliminar
+                        #self.append_log(f"LINEA RAW: [{line}]\n")
+                        ####
 
                         line = line.strip()
 
                         if not line:
+                            ##### Eliminar
+                            #self.append_log("VACIA\n")
+                            #####
                             continue
 
                         parts = line.split()
+                        
+                        ##### Eliminar
+                        #self.append_log(
+                        #    f"PARTS={parts} LEN={len(parts)}\n"
+                        #)
+                        #####
 
                         if len(parts) < 2:
+                            ##### Eliminar
+                            #self.append_log("DESCARTADA\n")
+                            ####
                             continue
 
                         nombre = parts[0]
                         appid = parts[1]
 
-                        version = "-"
+                        #version = "-"
+                        
+                        #### Eliminar y descomentar suprerior
+                        version = parts[2] if len(parts) >= 3 else "-"
 
-                        if len(parts) >= 3:
-                            version = parts[2]
+                        #self.append_log(
+                        #    f"AÑADIENDO {nombre} {version}\n"
+                        #)
+                        ####
 
+                        ###### Descomentar
+                        #if len(parts) >= 3:
+                        #    version = parts[2]
+                        #######
+                        
                         updates.append(
                             (
                                 "app",
@@ -277,6 +318,19 @@ class Updater(Gtk.Window):
                             updates.append(
                                 ("snap", parts[0], parts[1], "Snap")
                             )
+                            
+                
+                
+                ##### Eliminar este bloque
+                
+                #self.append_log(
+                #    f"\nTOTAL UPDATES: {len(updates)}\n"
+                #)
+
+                #for u in updates:
+                #    self.append_log(f"{u}\n")
+                ###########
+                
 
                 GLib.idle_add(self.fill, updates)
 
@@ -307,9 +361,25 @@ class Updater(Gtk.Window):
 
     def fill(self, updates):
         self.set_busy(False)
+        
+        ###### Eliminar bloque
+        
+        #print("FILL RECIBE:")
+        #print(updates)
+        
+        ########
 
         for u in updates:
+            ###### Eliminar
+            #print("AÑADIENDO:", u)
+            #######
             self.store.append([False, *u])
+        
+        #### Eliminar linea
+        
+        #print("FILAS:", len(self.store))
+        
+        ####
 
         self.t_all.set_sensitive(True)
         self.t_apt.set_sensitive(True)
@@ -468,6 +538,7 @@ class Updater(Gtk.Window):
 
                 self.run_command_live(
                     [
+                        "pkexec",
                         "flatpak",
                         "update",
                         "-y"
